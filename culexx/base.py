@@ -7,6 +7,20 @@ import traceback
 
 class Base(object):
 
+    START_CTX = {}
+
+    PIPE = []
+
+    SIG_QUEUE = []
+
+    SIGNALS = [getattr(signal, "SIG%s" % x) \
+            for x in "HUP QUIT INT TERM".split()]
+
+    SIG_NAMES = dict(
+        (getattr(signal, name), name[3:].lower()) for name in dir(signal)
+        if name[:3] == "SIG" and name[3] != "_"
+    )
+
     def __init__(self, usage=None, prog=None):
         self.usage = usage
         self.cfg = None
@@ -155,8 +169,41 @@ class Base(object):
             self.wakeup()
 
 
-    def run(self):
-        "Main master loop."
+    def run_app(self):
+
+        os.environ["SERVER_SOFTWARE"] = "culexx"
+
+        self.log = self.cfg.logger_class(app.cfg)
+
+        # reopen files
+        if 'CULEXX_FD' in os.environ:
+            self.log.reopen_files()
+
+        self.debug = self.cfg.debug
+        self.proc_name = self.cfg.proc_name
+
+        if self.cfg.debug:
+            self.log.debug("Current configuration:")
+            for config, value in sorted(self.cfg.settings.items(),
+                    key=lambda setting: setting[1]):
+                self.log.debug("  %s: %s", config, value.value)
+
+        self.pidfile = None
+        self.reexec_pid = 0
+        self.master_name = "Master"
+
+        cwd = util.getcwd()
+
+        args = sys.argv[:]
+        args.insert(0, sys.executable)
+
+        # init start context
+        self.START_CTX = {
+            "args": args,
+            "cwd": cwd,
+            0: sys.executable
+        }
+
         self.start()
         util._setproctitle("master [%s]" % self.proc_name)
 
@@ -272,7 +319,7 @@ class Base(object):
                     sys.path.insert(0, pythonpath)
 
         try:
-            Arbiter(self).run()
+            self.run_app()
         except RuntimeError as e:
             sys.stderr.write("\nError: %s\n\n" % e)
             sys.stderr.flush()
